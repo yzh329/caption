@@ -1,0 +1,149 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Local Live Meeting Captions</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="app-shell">
+    <section class="toolbar">
+      <div>
+        <h1>Local Live Captions</h1>
+        <p>Fast English transcript plus delayed repaired paragraphs</p>
+      </div>
+      <div class="actions">
+        <button id="preloadBtn" class="secondary" type="button">Preload all</button>
+        <button id="refineBtn" class="secondary" type="button">Paragraphs</button>
+        <button id="summaryBtn" class="secondary" type="button">Summary</button>
+        <button id="startBtn">Start</button>
+        <button id="stopBtn" disabled>Stop</button>
+      </div>
+    </section>
+
+    <section class="settings">
+      <label>
+        Audio source
+        <select id="source"></select>
+      </label>
+      <button id="refreshSourcesBtn" class="secondary" type="button">Refresh</button>
+      <label>
+        Session name
+        <input id="sessionName" placeholder="team-sync">
+      </label>
+      <label>
+        Browser input
+        <select id="browserInput"></select>
+      </label>
+      <label>
+        ASR backend
+        <select id="asrBackend">
+          <option value="auto" selected>auto - MLX on Mac, faster-whisper elsewhere</option>
+          <option value="mlx_whisper">mlx-whisper - Apple Silicon GPU</option>
+          <option value="faster_whisper">faster-whisper - Windows/NVIDIA/CPU</option>
+        </select>
+      </label>
+      <label>
+        Whisper model
+        <select id="whisperModel">
+          <option value="large-v3">large-v3 - best quality, large</option>
+          <option value="distil-large-v3">distil-large-v3 - common fast large</option>
+          <option value="medium" selected>medium - common balanced</option>
+          <option value="small">small - faster, smaller</option>
+        </select>
+      </label>
+      <label>
+        Device
+        <select id="device">
+          <option value="cpu" selected>cpu - Whisper on Mac / safest</option>
+          <option value="cuda">cuda - NVIDIA Windows/Linux</option>
+        </select>
+      </label>
+      <label>
+        Compute
+        <select id="computeType">
+          <option value="int8" selected>int8 - Mac / safest</option>
+          <option value="float16">float16 - NVIDIA GPU</option>
+        </select>
+      </label>
+      <label>
+        Chunk seconds
+        <input id="chunkSeconds" type="number" min="2" max="20" step="1" value="3">
+      </label>
+      <label>
+        Live translation model
+        <input id="ollamaModel" list="ollamaModelOptions" value="qwen2.5:7b">
+      </label>
+      <label>
+        Summary chunk model
+        <input id="summaryOllamaModel" list="ollamaModelOptions" value="qwen2.5:7b">
+      </label>
+      <label>
+        Final summary model
+        <input id="finalOllamaModel" list="ollamaModelOptions" value="qwen2.5:7b">
+      </label>
+      <datalist id="ollamaModelOptions">
+        <option value="qwen3:32b" label="large"></option>
+        <option value="qwen3:30b" label="large"></option>
+        <option value="gpt-oss:20b" label="common summary"></option>
+        <option value="qwen3:14b" label="common balanced"></option>
+        <option value="qwen2.5:14b" label="common translation"></option>
+        <option value="qwen3:8b" label="small common"></option>
+        <option value="qwen2.5:7b" label="small common translation"></option>
+        <option value="qwen3:4b" label="small"></option>
+      </datalist>
+      <label>
+        Text size
+        <input id="textSize" type="range" min="14" max="30" step="1" value="18">
+      </label>
+      <label class="checkbox">
+        <input id="translate" type="checkbox" checked>
+        Translate to Chinese
+      </label>
+      <label class="checkbox">
+        <input id="includeMic" type="checkbox">
+        Include mic
+      </label>
+      <label class="checkbox">
+        <input id="autoSummary" type="checkbox" checked>
+        Auto summary
+      </label>
+    </section>
+
+    <section class="status-line">
+      <span id="status">idle</span>
+      <span id="savedPath"></span>
+    </section>
+
+    <section class="transcript-grid" aria-live="polite">
+      <section class="transcript-panel live-panel">
+        <div class="panel-heading">
+          <h2>Live English</h2>
+          <span>fast chunks</span>
+        </div>
+        <div id="liveTranscript" class="transcript-stream"></div>
+      </section>
+      <section class="transcript-panel refined-panel">
+        <div class="panel-heading">
+          <h2>Complete Transcript</h2>
+          <span>delayed paragraphs</span>
+        </div>
+        <div class="language-columns">
+          <section class="language-pane">
+            <div class="language-heading">English</div>
+            <div id="englishTranscript" class="paragraph-stream"></div>
+          </section>
+          <section class="language-pane">
+            <div class="language-heading">中文</div>
+            <div id="chineseTranscript" class="paragraph-stream"></div>
+          </section>
+        </div>
+      </section>
+    </section>
+
+    <section id="systemLog" class="system-log" aria-live="polite"></section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
