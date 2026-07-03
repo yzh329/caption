@@ -1,4 +1,6 @@
-﻿logs/
+logs/
 output/
 __pycache__/
 *.pyc
+docs/
+summary_terms.md

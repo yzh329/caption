@@ -1,8 +1,9 @@
-﻿const sourceSelect = document.querySelector("#source");
+const sourceSelect = document.querySelector("#source");
 const refreshSourcesBtn = document.querySelector("#refreshSourcesBtn");
 const sessionNameInput = document.querySelector("#sessionName");
 const browserInputSelect = document.querySelector("#browserInput");
 const asrBackendInput = document.querySelector("#asrBackend");
+const mlxModelInput = document.querySelector("#mlxModel");
 const preloadBtn = document.querySelector("#preloadBtn");
 const refineBtn = document.querySelector("#refineBtn");
 const summaryBtn = document.querySelector("#summaryBtn");
@@ -168,6 +169,9 @@ async function loadSources() {
       option.value = source.id;
       option.textContent = source.label;
       sourceSelect.appendChild(option);
+    }
+    if (sources.some((source) => source.id === "browser_system")) {
+      sourceSelect.value = "browser_system";
     }
     if (!sources.length) {
       addSystem("No audio sources found. Check Windows microphone/privacy settings, then click Refresh.", true);
@@ -339,6 +343,7 @@ async function preloadWhisper() {
       body: JSON.stringify({
         asr_backend: asrBackendInput.value,
         whisper_model: document.querySelector("#whisperModel").value,
+        mlx_model: mlxModelInput.value,
         device: document.querySelector("#device").value,
         compute_type: document.querySelector("#computeType").value,
         ollama_model: ollamaModelInput.value,
@@ -560,6 +565,7 @@ async function sendChunk(blob) {
   form.append("session_id", sessionId);
   form.append("asr_backend", asrBackendInput.value);
   form.append("whisper_model", document.querySelector("#whisperModel").value);
+  form.append("mlx_model", mlxModelInput.value);
   form.append("device", document.querySelector("#device").value);
   form.append("compute_type", document.querySelector("#computeType").value);
   form.append("translate", document.querySelector("#translate").checked ? "true" : "false");

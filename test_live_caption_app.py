@@ -1,6 +1,6 @@
-﻿import requests
+import requests
 
-from live_caption_app import format_ollama_http_error, mlx_whisper_repo, resolve_asr_backend, selected_ollama_models
+from live_caption_app import format_ollama_http_error, mlx_whisper_repo, normalize_asr_runtime, resolve_asr_backend, selected_ollama_models
 from summarize import transcript_signal_text
 
 
@@ -51,7 +51,13 @@ def test_asr_backend_aliases():
 
 def test_mlx_whisper_repo_maps_common_names():
     assert mlx_whisper_repo("medium") == "mlx-community/whisper-medium"
-    assert mlx_whisper_repo("mlx-community/custom") == "mlx-community/custom"
+    assert mlx_whisper_repo("medium", "mlx-community/custom") == "mlx-community/custom"
+
+
+def test_normalize_asr_runtime_gpu_means_platform_gpu():
+    assert normalize_asr_runtime("faster_whisper", "gpu", "auto") == ("cuda", "float16")
+    assert normalize_asr_runtime("faster_whisper", "cpu", "auto") == ("cpu", "int8")
+    assert normalize_asr_runtime("mlx_whisper", "gpu", "auto") == ("metal", "mlx")
 if __name__ == "__main__":
     test_ollama_404_names_missing_model()
     test_empty_transcribe_metadata_is_not_content()

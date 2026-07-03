@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
@@ -36,35 +36,31 @@
         Browser input
         <select id="browserInput"></select>
       </label>
-      <label>
-        ASR backend
-        <select id="asrBackend">
-          <option value="auto" selected>auto - MLX on Mac, faster-whisper elsewhere</option>
-          <option value="mlx_whisper">mlx-whisper - Apple Silicon GPU</option>
-          <option value="faster_whisper">faster-whisper - Windows/NVIDIA/CPU</option>
-        </select>
-      </label>
+      <input id="asrBackend" type="hidden" value="auto">
       <label>
         Whisper model
         <select id="whisperModel">
-          <option value="large-v3">large-v3 - best quality, large</option>
-          <option value="distil-large-v3">distil-large-v3 - common fast large</option>
-          <option value="medium" selected>medium - common balanced</option>
-          <option value="small">small - faster, smaller</option>
+          <option value="tiny">tiny - smallest / fastest</option>
+          <option value="small">small - light</option>
+          <option value="medium" selected>medium - balanced</option>
+          <option value="large-v3">large-v3 - best quality</option>
+          <option value="distil-large-v3">distil-large-v3 - fast large</option>
         </select>
       </label>
+      <input id="mlxModel" type="hidden" value="">
       <label>
         Device
         <select id="device">
-          <option value="cpu" selected>cpu - Whisper on Mac / safest</option>
-          <option value="cuda">cuda - NVIDIA Windows/Linux</option>
+          <option value="gpu" selected>gpu - Mac Metal / NVIDIA CUDA</option>
+          <option value="cpu">cpu - fallback</option>
         </select>
       </label>
       <label>
         Compute
         <select id="computeType">
-          <option value="int8" selected>int8 - Mac / safest</option>
+          <option value="auto" selected>auto</option>
           <option value="float16">float16 - NVIDIA GPU</option>
+          <option value="int8">int8 - CPU fallback</option>
         </select>
       </label>
       <label>
@@ -73,25 +69,29 @@
       </label>
       <label>
         Live translation model
-        <input id="ollamaModel" list="ollamaModelOptions" value="qwen2.5:7b">
+        <input id="ollamaModel" list="translationModelOptions" value="qwen2.5:7b">
       </label>
       <label>
         Summary chunk model
-        <input id="summaryOllamaModel" list="ollamaModelOptions" value="qwen2.5:7b">
+        <select id="summaryOllamaModel">
+          <option value="gemma3:12b">small - gemma3:12b</option>
+          <option value="qwen3:14b" selected>medium - qwen3:14b</option>
+          <option value="gpt-oss:20b">large - gpt-oss:20b</option>
+        </select>
       </label>
       <label>
         Final summary model
-        <input id="finalOllamaModel" list="ollamaModelOptions" value="qwen2.5:7b">
+        <select id="finalOllamaModel">
+          <option value="qwen3:14b">small - qwen3:14b</option>
+          <option value="gpt-oss:20b" selected>medium - gpt-oss:20b</option>
+          <option value="qwen3:30b">large - qwen3:30b</option>
+        </select>
       </label>
-      <datalist id="ollamaModelOptions">
-        <option value="qwen3:32b" label="large"></option>
-        <option value="qwen3:30b" label="large"></option>
-        <option value="gpt-oss:20b" label="common summary"></option>
-        <option value="qwen3:14b" label="common balanced"></option>
-        <option value="qwen2.5:14b" label="common translation"></option>
-        <option value="qwen3:8b" label="small common"></option>
-        <option value="qwen2.5:7b" label="small common translation"></option>
-        <option value="qwen3:4b" label="small"></option>
+      <datalist id="translationModelOptions">
+        <option value="qwen2.5:7b" label="small, strong Chinese/English"></option>
+        <option value="qwen3:8b" label="small, newer multilingual"></option>
+        <option value="gemma3:12b" label="medium, 128K context"></option>
+        <option value="qwen2.5:14b" label="medium, better translation"></option>
       </datalist>
       <label>
         Text size
@@ -102,7 +102,7 @@
         Translate to Chinese
       </label>
       <label class="checkbox">
-        <input id="includeMic" type="checkbox">
+        <input id="includeMic" type="checkbox" checked>
         Include mic
       </label>
       <label class="checkbox">

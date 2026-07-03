@@ -1,4 +1,6 @@
-﻿import argparse
+import argparse
+import importlib.util
+import platform
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -37,11 +39,15 @@ MLX_WHISPER_REPOS = {
     "small": "mlx-community/whisper-small",
     "medium": "mlx-community/whisper-medium",
     "large-v3": "mlx-community/whisper-large-v3",
-    "distil-large-v3": "mlx-community/distil-whisper-large-v3",
+    "distil-large-v3": "mlx-community/whisper-turbo",
 }
+MLX_FALLBACK_REPO = "mlx-community/whisper-turbo"
 
 
-def mlx_whisper_repo(model_name: str) -> str:
+def mlx_whisper_repo(model_name: str, mlx_model: str = "") -> str:
+    mlx_model = str(mlx_model or "").strip()
+    if mlx_model:
+        return mlx_model
     model_name = str(model_name or "").strip()
     return MLX_WHISPER_REPOS.get(model_name, model_name or MLX_WHISPER_REPOS["medium"])
 
@@ -63,17 +69,27 @@ def resolve_backend(requested: str) -> str:
     raise ValueError(f"Unknown backend: {requested}")
 
 
-def transcribe_with_mlx(input_path: Path, model_name: str, language: str | None):
+def transcribe_with_mlx(input_path: Path, model_name: str, language: str | None, mlx_model: str = ""):
     if not has_mlx_whisper():
         raise RuntimeError("mlx-whisper is not installed. On macOS run: .venv/bin/python -m pip install mlx-whisper")
     import mlx_whisper
 
-    result = mlx_whisper.transcribe(
-        str(input_path),
-        path_or_hf_repo=mlx_whisper_repo(model_name),
-        language=language,
-        task="transcribe",
-    )
+    try:
+        result = mlx_whisper.transcribe(
+            str(input_path),
+            path_or_hf_repo=mlx_whisper_repo(model_name, mlx_model),
+            language=language,
+            task="transcribe",
+        )
+    except Exception:
+        if mlx_model:
+            raise
+        result = mlx_whisper.transcribe(
+            str(input_path),
+            path_or_hf_repo=MLX_FALLBACK_REPO,
+            language=language,
+            task="transcribe",
+        )
     return result
 
 
@@ -90,20 +106,25 @@ def main() -> int:
         help="ASR backend: auto uses mlx-whisper on Apple Silicon when installed, otherwise faster-whisper.",
     )
     parser.add_argument(
+        "--mlx-model",
+        default="",
+        help="Optional MLX Whisper HF repo or local path. Empty means match --model when possible.",
+    )
+    parser.add_argument(
         "--model",
         default="large-v3",
         help="Whisper model: tiny, base, small, medium, large-v3, distil-large-v3",
     )
     parser.add_argument(
         "--device",
-        default="cuda",
-        choices=["cuda", "cpu", "auto"],
-        help="Use cuda for NVIDIA GPU, cpu for fallback, or auto.",
+        default="gpu",
+        choices=["gpu", "cuda", "cpu", "auto"],
+        help="Use gpu for Mac Metal/NVIDIA CUDA intent, or cpu for fallback.",
     )
     parser.add_argument(
         "--compute-type",
-        default="float16",
-        help="GPU: float16 is typical. CPU: int8 is typical.",
+        default="auto",
+        help="auto picks float16 on GPU/CUDA and int8 on CPU.",
     )
     parser.add_argument(
         "--language",
@@ -122,8 +143,12 @@ def main() -> int:
         return 2
 
     backend = resolve_backend(args.backend)
-    device = "cuda" if args.device == "auto" else args.device
-    compute_type = "int8" if device == "cpu" and args.compute_type == "float16" else args.compute_type
+    device = "cuda" if args.device in {"gpu", "auto", "cuda"} else "cpu"
+    compute_type = args.compute_type
+    if compute_type == "auto":
+        compute_type = "float16" if device == "cuda" else "int8"
+    elif device == "cpu" and compute_type == "float16":
+        compute_type = "int8"
 
     print(f"[info] Backend={backend} model={args.model} device={device} compute_type={compute_type}")
     print(f"[info] Transcribing: {input_path}")
@@ -134,7 +159,7 @@ def main() -> int:
     duration_seconds = 0
 
     if backend == "mlx_whisper":
-        result = transcribe_with_mlx(input_path, args.model, args.language)
+        result = transcribe_with_mlx(input_path, args.model, args.language, args.mlx_model)
         detected = result.get("language") or "unknown"
         for seg in result.get("segments") or []:
             text = str(seg.get("text", "")).strip()

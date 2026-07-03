@@ -1,7 +1,9 @@
-﻿import json
+import json
 import atexit
 import faulthandler
+import importlib.util
 import logging
+import platform
 import re
 import sys
 import traceback
@@ -168,11 +170,15 @@ MLX_WHISPER_REPOS = {
     "small": "mlx-community/whisper-small",
     "medium": "mlx-community/whisper-medium",
     "large-v3": "mlx-community/whisper-large-v3",
-    "distil-large-v3": "mlx-community/distil-whisper-large-v3",
+    "distil-large-v3": "mlx-community/whisper-turbo",
 }
+MLX_FALLBACK_REPO = "mlx-community/whisper-turbo"
 
 
-def mlx_whisper_repo(model_name: str) -> str:
+def mlx_whisper_repo(model_name: str, mlx_model: str = "") -> str:
+    mlx_model = str(mlx_model or "").strip()
+    if mlx_model:
+        return mlx_model
     model_name = str(model_name or "").strip()
     return MLX_WHISPER_REPOS.get(model_name, model_name or MLX_WHISPER_REPOS["medium"])
 
@@ -194,36 +200,64 @@ def resolve_asr_backend(requested: str) -> str:
     raise ValueError(f"Unknown ASR backend: {requested}")
 
 
-def preload_asr_model(asr_backend: str, model_name: str, device: str, compute_type: str):
+def normalize_asr_runtime(asr_backend: str, device: str, compute_type: str) -> tuple[str, str]:
+    device = str(device or "gpu").strip().lower()
+    compute_type = str(compute_type or "auto").strip().lower()
+    if asr_backend == "mlx_whisper":
+        return "metal", "mlx"
+    if device in {"gpu", "auto", "cuda"}:
+        return "cuda", "float16" if compute_type == "auto" else compute_type
+    return "cpu", "int8" if compute_type in {"auto", "float16"} else compute_type
+
+
+def preload_asr_model(asr_backend: str, model_name: str, device: str, compute_type: str, mlx_model: str = ""):
     used_backend = resolve_asr_backend(asr_backend)
     if used_backend == "mlx_whisper":
         if not has_mlx_whisper():
             raise RuntimeError("mlx-whisper is not installed. On macOS run: .venv/bin/python -m pip install mlx-whisper")
-        repo = mlx_whisper_repo(model_name)
+        repo = mlx_whisper_repo(model_name, mlx_model)
         try:
             from huggingface_hub import snapshot_download
         except Exception:
             publish("status", message=f"mlx-whisper ready; model downloads on first use: {repo}")
         else:
             publish("status", message=f"Downloading/checking mlx-whisper model: {repo}")
-            snapshot_download(repo_id=repo)
+            try:
+                snapshot_download(repo_id=repo)
+            except Exception:
+                if mlx_model:
+                    raise
+                repo = MLX_FALLBACK_REPO
+                publish("status", message=f"MLX model not found, using fallback: {repo}")
+                snapshot_download(repo_id=repo)
             publish("status", message=f"mlx-whisper model ready: {repo}")
         return None, "metal", "mlx", used_backend
 
+    device, compute_type = normalize_asr_runtime(used_backend, device, compute_type)
     model, used_device, used_compute = load_whisper(model_name, device, compute_type)
     return model, used_device, used_compute, used_backend
 
 
-def transcribe_asr_file(asr_backend: str, model, model_name: str, chunk_path: Path) -> str:
+def transcribe_asr_file(asr_backend: str, model, model_name: str, chunk_path: Path, mlx_model: str = "") -> str:
     if asr_backend == "mlx_whisper":
         import mlx_whisper
 
-        result = mlx_whisper.transcribe(
-            str(chunk_path),
-            path_or_hf_repo=mlx_whisper_repo(model_name),
-            language="en",
-            task="transcribe",
-        )
+        try:
+            result = mlx_whisper.transcribe(
+                str(chunk_path),
+                path_or_hf_repo=mlx_whisper_repo(model_name, mlx_model),
+                language="en",
+                task="transcribe",
+            )
+        except Exception:
+            if mlx_model:
+                raise
+            result = mlx_whisper.transcribe(
+                str(chunk_path),
+                path_or_hf_repo=MLX_FALLBACK_REPO,
+                language="en",
+                task="transcribe",
+            )
         return str(result.get("text", "")).strip()
     return transcribe_file_to_text(model, chunk_path)
 
@@ -655,8 +689,9 @@ def api_preload():
     config = request.get_json(force=True)
     asr_backend = config.get("asr_backend", "auto")
     whisper_model = config.get("whisper_model", "small")
-    device = config.get("device", "cpu")
-    compute_type = config.get("compute_type", "int8")
+    mlx_model = config.get("mlx_model", "")
+    device = config.get("device", "gpu")
+    compute_type = config.get("compute_type", "auto")
     ollama_host = config.get("ollama_host", "http://localhost:11434")
     ollama_models = selected_ollama_models(
         config.get("ollama_model", DEFAULT_MODEL),
@@ -678,6 +713,7 @@ def api_preload():
             whisper_model,
             device,
             compute_type,
+            mlx_model,
         )
         for model in ollama_models:
             pull_ollama_model(model, ollama_host)
@@ -812,8 +848,9 @@ def api_transcribe_chunk():
 
     asr_backend = request.form.get("asr_backend", "auto")
     whisper_model = request.form.get("whisper_model", "medium")
-    device = request.form.get("device", "cpu")
-    compute_type = request.form.get("compute_type", "int8")
+    mlx_model = request.form.get("mlx_model", "")
+    device = request.form.get("device", "gpu")
+    compute_type = request.form.get("compute_type", "auto")
     translate = request.form.get("translate", "true") == "true"
     ollama_model = request.form.get("ollama_model", DEFAULT_MODEL)
     ollama_host = request.form.get("ollama_host", "http://localhost:11434")
@@ -832,16 +869,16 @@ def api_transcribe_chunk():
 
     try:
         global cuda_disabled_reason
-        model, used_device, used_compute, used_backend = preload_asr_model(asr_backend, whisper_model, device, compute_type)
+        model, used_device, used_compute, used_backend = preload_asr_model(asr_backend, whisper_model, device, compute_type, mlx_model)
         try:
-            english = transcribe_asr_file(used_backend, model, whisper_model, chunk_path)
+            english = transcribe_asr_file(used_backend, model, whisper_model, chunk_path, mlx_model)
         except Exception as exc:
             if used_backend == "faster_whisper" and used_device != "cpu" and is_cuda_runtime_error(exc):
                 cuda_disabled_reason = str(exc)
                 logging.exception("CUDA transcription failed; retrying chunk on CPU int8")
                 publish("status", message=f"CUDA failed, retrying on CPU int8: {exc}")
                 model, used_device, used_compute, used_backend = preload_asr_model("faster_whisper", whisper_model, "cpu", "int8")
-                english = transcribe_asr_file(used_backend, model, whisper_model, chunk_path)
+                english = transcribe_asr_file(used_backend, model, whisper_model, chunk_path, mlx_model)
             else:
                 raise
         timestamp = datetime.now().strftime("%H:%M:%S")

@@ -1,4 +1,4 @@
-﻿# Setup for Friends
+# Setup for Friends
 
 Windows 10/11:
 
@@ -36,11 +36,11 @@ If install fails, send the contents of `logs/live_caption_launcher.log` and the 
 
 macOS Apple Silicon:
 
-Ollama uses the Mac GPU through Metal automatically. For Whisper transcription, choose `auto` or `mlx-whisper` on Apple Silicon; `cuda` is only for NVIDIA Windows/Linux.
+Ollama uses the Mac GPU through Metal automatically. The UI uses `gpu` by default: Apple Silicon maps to MLX/Metal when `mlx-whisper` is installed, and Windows NVIDIA maps to CUDA. No one needs to choose ASR backend or MLX repo/path in normal use.
 
-For M2 16GB, use `cpu` + `int8`, Whisper `medium`, live translation `qwen2.5:7b`, and summary `qwen2.5:7b` or `qwen3:8b`.
+For M2 16GB, use default `gpu`, Whisper `medium`, live translation `qwen2.5:7b`, and summary `qwen3:14b` or `gpt-oss:20b`.
 
-For M1 32GB, use the same Whisper settings; summary can use `qwen3:14b` if speed is acceptable.
+For M1 32GB, use default `gpu`; summary can try `qwen3:30b` or `gemma3:27b` if speed is acceptable.
 
 ```bash
 brew install python ffmpeg ollama
