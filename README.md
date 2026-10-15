@@ -10,6 +10,8 @@ English version is below.
 
 - 默认使用 Chrome/system audio 录音，也可以同时包含麦克风。
 - 本地 Whisper 转写英文。
+- 连续录音，默认每 3 秒刷新字幕，使用最近约 15 秒音频作为上下文；标记为 `Draft` 的末尾字幕可修订。
+- 连续两轮一致的文字确认后才写入正式转录并送去翻译；未稳定音频会保留更久，点 `Stop` 后保存剩余尾段。
 - 可选中文翻译和段落修复。
 - 会议结束后一键生成 short / deep summary。
 - Windows 和 Apple Silicon Mac 都可用。
@@ -48,7 +50,7 @@ chmod +x setup_macos.sh run_live_ui.command
 1. 点 `Preload all`，提前下载/加载模型。
 2. `Audio source` 默认是 Chrome/system audio；Chrome 分享窗口里要勾选音频共享。
 3. `Include mic` 默认开启，会把麦克风也混进去。
-4. 点 `Start` 开始，点 `Stop` 结束。
+4. 点 `Start` 开始，点 `Stop` 后等待 `Final subtitles saved`；上传失败时保留页面，恢复连接后再点 `Stop`。
 5. 输出文件在 `output/live/...`。
 
 ### 模型选择
@@ -56,19 +58,24 @@ chmod +x setup_macos.sh run_live_ui.command
 Whisper:
 
 - `small`: 更快，质量一般。
-- `medium`: 默认推荐，速度和质量平衡。
-- `large-v3` / `distil-large-v3`: 更准，但更慢。
+- `medium`: 较小模型。
+- `distil-large-v3`: 当前默认，保留实时识别速度。
+- `large-v3`: 完整大模型，可自行比较质量和耗时。
 
 翻译模型：默认 `qwen2.5:7b`，适合实时翻译。
 
+可选试用 `qwen3.5:9b-q4_K_M`（约 6.6GB 下载）；Qwen3 翻译关闭思考，翻译请求关闭 presence penalty。当前会议样本尚未显示稳定质量优势，因此保留原默认值。
+
 Summary chunk model:
 
+- 默认：`hf.co/unsloth/Qwen3.8-27B-GGUF:UD-IQ3_S`（27B，3-bit，模型约 12GB）
 - small: `gemma3:12b`
 - medium: `qwen3:14b`
 - large: `gpt-oss:20b`
 
 Final summary model:
 
+- 默认：同上，Qwen3.8 27B 3-bit
 - small: `qwen3:14b`
 - medium: `gpt-oss:20b`
 - large: `qwen3:30b`
@@ -87,6 +94,7 @@ Ollama 模型缺失：
 
 ```bash
 ollama pull qwen2.5:7b
+ollama pull hf.co/unsloth/Qwen3.8-27B-GGUF:UD-IQ3_S
 ollama pull qwen3:14b
 ollama pull gpt-oss:20b
 ```
@@ -134,12 +142,16 @@ Open: <http://127.0.0.1:7860>
 
 ### Models
 
-- Whisper: `medium` is the default balance; use `small` for speed, `large-v3` or `distil-large-v3` for quality.
+- Whisper: `distil-large-v3` is the default; `medium`, `small`, and full `large-v3` remain available.
 - Translation: `qwen2.5:7b` is the default low-latency choice.
-- Summary chunk: `gemma3:12b`, `qwen3:14b`, or `gpt-oss:20b`.
-- Final summary: `qwen3:14b`, `gpt-oss:20b`, or `qwen3:30b`.
+- Summary chunk and final summary default: `hf.co/unsloth/Qwen3.8-27B-GGUF:UD-IQ3_S` (27B, 3-bit, about 12GB on disk). CLI and backfill use the same default.
+- Alternatives remain available in the UI: `gemma3:12b`, `qwen3:14b`, `gpt-oss:20b`, and `qwen3:30b`.
 
 The UI uses `gpu` by default. Apple Silicon maps to MLX/Metal when available; Windows NVIDIA maps to CUDA; CPU fallback is available.
+
+Audio capture runs continuously. Subtitles refresh every 3 seconds using about 15 seconds of context. The trailing `Draft` can change; text confirmed by two updates is saved and queued for translation. Unstable audio is retained beyond the target window rather than discarded. Stop flushes the remaining audio and pending text before auto-summary. New source audio is saved once per chunk as `audio_*.wav`; `stream_state.npz` permits retry/resume after a server restart.
+
+Run the regression checks with `python -m pytest -q test_live_caption_app.py` and `node test_audio_capture.js`.
 
 ### Main Files
 

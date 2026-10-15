@@ -8,8 +8,8 @@ import requests
 
 
 DEFAULT_TERMS_FILE = "summary_terms.md"
-DEFAULT_MODEL = "gpt-oss:20b"
-DEFAULT_FINAL_MODEL = "gpt-oss:20b"
+DEFAULT_MODEL = "hf.co/unsloth/Qwen3.8-27B-GGUF:UD-IQ3_S"
+DEFAULT_FINAL_MODEL = DEFAULT_MODEL
 MIN_TAIL_CHARS = 1200
 FINAL_PARTIALS_CHAR_BUDGET = 30000
 PARTIAL_REDUCTION_GROUP_CHARS = 18000
@@ -23,7 +23,7 @@ def env_int(name: str, default: int) -> int:
         return default
 
 
-DEFAULT_OLLAMA_NUM_CTX = env_int("OLLAMA_NUM_CTX", 32768)
+DEFAULT_OLLAMA_NUM_CTX = env_int("OLLAMA_NUM_CTX", 16384)
 
 GROUNDING_STOPWORDS = {
     "about",
@@ -446,6 +446,8 @@ def ollama_chat(host: str, model: str, messages: list[dict], temperature: float)
             "model": model,
             "messages": messages,
             "stream": False,
+            # ponytail: summaries discard hidden reasoning; re-enable only if measured quality gains justify the latency.
+            "think": False,
             "options": options,
         },
         timeout=600,
@@ -1459,7 +1461,7 @@ def main() -> int:
         help="Ollama model for final merged summaries, e.g. gpt-oss:20b, qwen3:30b, qwen3:14b",
     )
     parser.add_argument("--host", default="http://localhost:11434")
-    parser.add_argument("--max-chars", type=int, default=8000, help="Chunk size for long meetings")
+    parser.add_argument("--max-chars", type=int, default=24000, help="Chunk size for long meetings")
     args = parser.parse_args()
 
     if args.output and args.mode == "both":

@@ -7,8 +7,8 @@
     [string]$WhisperModel = "large-v3",
     [string]$WhisperDevice = "cuda",
     [string]$ComputeType = "float16",
-    [string]$OllamaModel = "gpt-oss:20b",
-    [string]$FinalOllamaModel = "gpt-oss:20b",
+    [string]$OllamaModel = "hf.co/unsloth/Qwen3.8-27B-GGUF:UD-IQ3_S",
+    [string]$FinalOllamaModel = "hf.co/unsloth/Qwen3.8-27B-GGUF:UD-IQ3_S",
     [switch]$VadFilter
 )
 

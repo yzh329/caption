@@ -42,9 +42,9 @@
         <select id="whisperModel">
           <option value="tiny">tiny - smallest / fastest</option>
           <option value="small">small - light</option>
-          <option value="medium" selected>medium - balanced</option>
+          <option value="medium">medium - balanced</option>
           <option value="large-v3">large-v3 - best quality</option>
-          <option value="distil-large-v3">distil-large-v3 - fast large</option>
+          <option value="distil-large-v3" selected>distil-large-v3 - fast large</option>
         </select>
       </label>
       <input id="mlxModel" type="hidden" value="">
@@ -64,8 +64,8 @@
         </select>
       </label>
       <label>
-        Chunk seconds
-        <input id="chunkSeconds" type="number" min="2" max="20" step="1" value="3">
+        Subtitle refresh (seconds)
+        <input id="chunkSeconds" type="number" min="1" max="20" step="1" value="3">
       </label>
       <label>
         Live translation model
@@ -74,21 +74,24 @@
       <label>
         Summary chunk model
         <select id="summaryOllamaModel">
+          <option value="{{ default_summary_model }}" selected>Qwen3.8 27B - 3-bit (UD-IQ3_S)</option>
           <option value="gemma3:12b">small - gemma3:12b</option>
-          <option value="qwen3:14b" selected>medium - qwen3:14b</option>
+          <option value="qwen3:14b">medium - qwen3:14b</option>
           <option value="gpt-oss:20b">large - gpt-oss:20b</option>
         </select>
       </label>
       <label>
         Final summary model
         <select id="finalOllamaModel">
+          <option value="{{ default_final_model }}" selected>Qwen3.8 27B - 3-bit (UD-IQ3_S)</option>
           <option value="qwen3:14b">small - qwen3:14b</option>
-          <option value="gpt-oss:20b" selected>medium - gpt-oss:20b</option>
+          <option value="gpt-oss:20b">medium - gpt-oss:20b</option>
           <option value="qwen3:30b">large - qwen3:30b</option>
         </select>
       </label>
       <datalist id="translationModelOptions">
         <option value="qwen2.5:7b" label="small, strong Chinese/English"></option>
+        <option value="qwen3.5:9b-q4_K_M" label="Qwen3.5 9B Q4, translation trial"></option>
         <option value="qwen3:8b" label="small, newer multilingual"></option>
         <option value="gemma3:12b" label="medium, 128K context"></option>
         <option value="qwen2.5:14b" label="medium, better translation"></option>
@@ -120,7 +123,7 @@
       <section class="transcript-panel live-panel">
         <div class="panel-heading">
           <h2>Live English</h2>
-          <span>fast chunks</span>
+          <span>draft subtitles may update</span>
         </div>
         <div id="liveTranscript" class="transcript-stream"></div>
       </section>

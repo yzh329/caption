@@ -22,7 +22,6 @@ const ollamaModelInput = document.querySelector("#ollamaModel");
 const summaryOllamaModelInput = document.querySelector("#summaryOllamaModel");
 const finalOllamaModelInput = document.querySelector("#finalOllamaModel");
 let latestEventId = 0;
-let mediaRecorder = null;
 let captureStream = null;
 let recorderStream = null;
 let micStream = null;
@@ -30,24 +29,23 @@ let audioContext = null;
 let sessionId = null;
 let chunkIndex = 0;
 let recordingActive = false;
-let segmentTimer = null;
-let recorderMimeType = "audio/webm";
-let recorderChunkMs = 3000;
-let activeUploads = 0;
+let captureNode = null;
+let captureSource = null;
+let captureParts = [];
+let captureSampleCount = 0;
+let samplesPerChunk = 0;
+let captureConfig = null;
+let captureFlushed = null;
+let finalQueued = false;
+let uploadQueue = [];
+let uploading = false;
+let uploadFailure = null;
+let lastCaptionIndex = -1;
+let draftCaptionEl = null;
 let liveChunkCount = 0;
 let completeParagraphCount = 0;
 let activeEnglishParagraph = null;
 let activeChineseParagraph = null;
-
-function waitForRecorderStop(recorder) {
-  if (!recorder || recorder.state === "inactive") {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    recorder.addEventListener("stop", resolve, {once: true});
-    recorder.stop();
-  });
-}
 
 function setPlaceholder(target, message) {
   target.innerHTML = "";
@@ -66,17 +64,25 @@ function addSystem(message, error = false) {
 }
 
 function addCaption(event) {
-  if (liveChunkCount === 0) {
+  if (liveChunkCount === 0 && (event.english || event.draft)) {
     liveTranscriptEl.innerHTML = "";
   }
-  liveChunkCount += 1;
-  const article = document.createElement("article");
-  article.className = "entry";
-  article.innerHTML = `
-    <div class="meta">${escapeHtml(event.timestamp || event.time || "")}</div>
-    <div class="english">${escapeHtml(event.english || "")}</div>
-  `;
-  liveTranscriptEl.appendChild(article);
+  if (event.draft !== undefined) {
+    draftCaptionEl?.remove();
+    draftCaptionEl = null;
+  }
+  for (const [text, draft] of [[event.english, false], [event.draft, true]]) {
+    if (!text) continue;
+    liveChunkCount += 1;
+    const article = document.createElement("article");
+    article.className = draft ? "entry draft" : "entry";
+    article.innerHTML = `
+      <div class="meta">${draft ? "Draft" : escapeHtml(event.timestamp || event.time || "")}</div>
+      <div class="english">${escapeHtml(text)}</div>
+    `;
+    liveTranscriptEl.insertBefore(article, draftCaptionEl);
+    if (draft) draftCaptionEl = article;
+  }
   liveTranscriptEl.scrollTop = liveTranscriptEl.scrollHeight;
   if (event.transcript) {
     savedPathEl.textContent = event.transcript;
@@ -218,10 +224,13 @@ async function loadBrowserInputs() {
 }
 
 async function start() {
+  if (recordingActive || uploadQueue.length) return;
   liveChunkCount = 0;
   completeParagraphCount = 0;
   activeEnglishParagraph = null;
   activeChineseParagraph = null;
+  draftCaptionEl = null;
+  lastCaptionIndex = -1;
   setPlaceholder(liveTranscriptEl, "Waiting for live English...");
   setPlaceholder(englishTranscriptEl, "Waiting for repaired English...");
   setPlaceholder(chineseTranscriptEl, "等待更完整的中文段落...");
@@ -231,6 +240,7 @@ async function start() {
     addSystem("Choose an audio source first. Click Refresh if the list is empty.", true);
     return;
   }
+  startBtn.disabled = true;
   try {
     const timestamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-");
     const sessionSlug = slugifySessionName(sessionNameInput.value);
@@ -261,35 +271,32 @@ async function start() {
       await loadBrowserInputs();
     }
 
-    recorderMimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-      ? "audio/webm;codecs=opus"
-      : "audio/webm";
-    recorderChunkMs = Number(document.querySelector("#chunkSeconds").value) * 1000;
+    captureConfig = {
+      session_id: sessionId,
+      asr_backend: asrBackendInput.value,
+      whisper_model: document.querySelector("#whisperModel").value,
+      mlx_model: mlxModelInput.value,
+      device: document.querySelector("#device").value,
+      compute_type: document.querySelector("#computeType").value,
+      translate: document.querySelector("#translate").checked ? "true" : "false",
+      ollama_model: ollamaModelInput.value,
+      ollama_host: "http://localhost:11434"
+    };
+    captureParts = [];
+    captureSampleCount = 0;
+    finalQueued = false;
+    await startAudioCapture();
     recordingActive = true;
-    startRecorderSegment();
+    for (const track of captureStream.getTracks()) {
+      track.addEventListener("ended", () => { if (recordingActive) stop(); }, {once: true});
+    }
     startBtn.disabled = true;
     stopBtn.disabled = false;
     statusEl.textContent = "recording";
     addSystem("Recording through browser capture. First transcript may take a little longer while Whisper loads.");
   } catch (error) {
     recordingActive = false;
-    if (captureStream) {
-      for (const track of captureStream.getTracks()) {
-        track.stop();
-      }
-    }
-    if (micStream) {
-      for (const track of micStream.getTracks()) {
-        track.stop();
-      }
-    }
-    if (audioContext) {
-      await audioContext.close();
-    }
-    captureStream = null;
-    micStream = null;
-    audioContext = null;
-    recorderStream = null;
+    await releaseCapture();
     addSystem(`Cannot start browser capture: ${error.message || error}`, true);
     startBtn.disabled = false;
     stopBtn.disabled = true;
@@ -315,7 +322,7 @@ async function getSelectedMicStream() {
 }
 
 function mixAudioStreams(systemStream, microphoneStream) {
-  audioContext = new AudioContext();
+  audioContext = new AudioContext({sampleRate: 16000});
   const destination = audioContext.createMediaStreamDestination();
 
   const systemSource = audioContext.createMediaStreamSource(new MediaStream(systemStream.getAudioTracks()));
@@ -372,42 +379,32 @@ async function preloadWhisper() {
 }
 
 async function stop() {
+  stopBtn.disabled = true;
   try {
     recordingActive = false;
-    if (segmentTimer) {
-      clearTimeout(segmentTimer);
-      segmentTimer = null;
-    }
-    await waitForRecorderStop(mediaRecorder);
-    mediaRecorder = null;
-    if (captureStream) {
-      for (const track of captureStream.getTracks()) {
-        track.stop();
+    if (!finalQueued) {
+      if (captureNode) {
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("Audio capture did not finish flushing.")), 5000);
+          captureFlushed = () => { clearTimeout(timeout); resolve(); };
+          captureNode.port.postMessage("flush");
+        });
       }
+      enqueueAudio(takeAudio(captureSampleCount), true);
+      finalQueued = true;
+      await releaseCapture();
     }
-    if (micStream) {
-      for (const track of micStream.getTracks()) {
-        track.stop();
-      }
-    }
-    if (audioContext) {
-      await audioContext.close();
-    }
-    captureStream = null;
-    micStream = null;
-    audioContext = null;
-    recorderStream = null;
-    startBtn.disabled = false;
-    stopBtn.disabled = true;
-    statusEl.textContent = "stopped";
-    addSystem("Stopped.");
     await waitForPendingChunks();
     await flushTranslation();
+    statusEl.textContent = "stopped";
+    addSystem("Stopped. Final subtitles saved.");
+    startBtn.disabled = false;
     if (autoSummaryInput.checked) {
       generateSummary(true);
     }
   } catch (error) {
-    addSystem(`Cannot stop cleanly. You can close the launcher window. ${error}`, true);
+    stopBtn.disabled = false;
+    addSystem(`Finishing the session failed. Keep this tab open and click Stop again after the connection recovers. ${error.message || error}`, true);
   }
 }
 
@@ -415,29 +412,27 @@ async function flushTranslation() {
   if (!sessionId) {
     return;
   }
-  try {
-    await fetch("/api/flush_translation", {
+  const response = await fetch("/api/flush_translation", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         session_id: sessionId,
-        ollama_model: ollamaModelInput.value,
+        ollama_model: captureConfig?.ollama_model || ollamaModelInput.value,
         ollama_host: "http://localhost:11434",
-        translate: document.querySelector("#translate").checked
+        translate: captureConfig ? captureConfig.translate === "true" : document.querySelector("#translate").checked
       })
-    });
-  } catch (error) {
-    addSystem(`Could not flush final translation chunk: ${error.message || error}`, true);
-  }
+  });
+  const data = await response.json();
+  if (!data.ok) throw new Error(data.error || "Could not flush the final translation.");
 }
 
 async function waitForPendingChunks(timeoutMs = 90000) {
   const started = Date.now();
-  await new Promise((resolve) => setTimeout(resolve, 800));
-  while (activeUploads > 0 && Date.now() - started < timeoutMs) {
-    statusEl.textContent = `waiting for ${activeUploads} chunk(s)`;
+  while (uploadQueue.length && Date.now() - started < timeoutMs) {
+    statusEl.textContent = `saving ${uploadQueue.length} audio chunk(s)`;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
+  if (uploadQueue.length) throw new Error(uploadFailure?.message || "Audio upload has not finished.");
 }
 
 async function refineTranscript() {
@@ -528,69 +523,113 @@ async function generateSummary(fromStop = false) {
   }
 }
 
-function startRecorderSegment() {
-  if (!recordingActive || !recorderStream) {
-    return;
-  }
-
-  const chunks = [];
-  mediaRecorder = new MediaRecorder(recorderStream, {mimeType: recorderMimeType});
-  mediaRecorder.ondataavailable = (event) => {
-    if (event.data && event.data.size > 0) {
-      chunks.push(event.data);
-    }
-  };
-  mediaRecorder.onstop = () => {
-    segmentTimer = null;
-    if (chunks.length) {
-      const blob = new Blob(chunks, {type: recorderMimeType});
-      sendChunk(blob);
-    }
-    if (recordingActive && recorderStream) {
-      setTimeout(startRecorderSegment, 150);
-    }
-  };
-  mediaRecorder.start();
-  segmentTimer = setTimeout(() => {
-    if (mediaRecorder && mediaRecorder.state === "recording") {
-      mediaRecorder.stop();
-    }
-  }, recorderChunkMs);
-}
-
-async function sendChunk(blob) {
-  activeUploads += 1;
-  const form = new FormData();
-  form.append("audio", blob, `chunk_${chunkIndex++}.webm`);
-  form.append("session_id", sessionId);
-  form.append("asr_backend", asrBackendInput.value);
-  form.append("whisper_model", document.querySelector("#whisperModel").value);
-  form.append("mlx_model", mlxModelInput.value);
-  form.append("device", document.querySelector("#device").value);
-  form.append("compute_type", document.querySelector("#computeType").value);
-  form.append("translate", document.querySelector("#translate").checked ? "true" : "false");
-  form.append("ollama_model", ollamaModelInput.value);
-  form.append("ollama_host", "http://localhost:11434");
-
-  try {
-    statusEl.textContent = "transcribing";
-    const res = await fetch("/api/transcribe_chunk", {method: "POST", body: form});
-    const data = await res.json();
-    if (!data.ok) {
-      addSystem(data.error || "Chunk transcription failed.", true);
+async function startAudioCapture() {
+  audioContext ||= new AudioContext({sampleRate: 16000});
+  await audioContext.resume();
+  const seconds = Number(document.querySelector("#chunkSeconds").value);
+  if (!Number.isFinite(seconds) || seconds < 1 || seconds > 20) throw new Error("Subtitle refresh must be 1–20 seconds.");
+  samplesPerChunk = Math.round(audioContext.sampleRate * seconds);
+  await audioContext.audioWorklet.addModule("/static/audio-capture.js");
+  captureSource = audioContext.createMediaStreamSource(recorderStream);
+  captureNode = new AudioWorkletNode(audioContext, "caption-audio-capture", {outputChannelCount: [1]});
+  captureNode.port.onmessage = ({data}) => {
+    if (data.type === "flushed") {
+      captureFlushed?.();
+      captureFlushed = null;
       return;
     }
-    if (data.english || data.chinese) {
-      addCaption(data);
-      statusEl.textContent = `recording (${data.asr_backend || "asr"}, ${data.device})`;
-    } else {
-      statusEl.textContent = "recording (silence)";
+    captureParts.push(data.samples);
+    captureSampleCount += data.samples.length;
+    while (recordingActive && captureSampleCount >= samplesPerChunk) {
+      enqueueAudio(takeAudio(samplesPerChunk));
     }
-  } catch (error) {
-    addSystem(`Cannot transcribe chunk: ${error.message || error}`, true);
-    statusEl.textContent = "server disconnected";
+  };
+  captureSource.connect(captureNode).connect(audioContext.destination);
+}
+
+async function releaseCapture() {
+  captureNode?.disconnect();
+  captureSource?.disconnect();
+  for (const stream of [captureStream, micStream, recorderStream]) {
+    for (const track of stream?.getTracks() || []) track.stop();
+  }
+  if (audioContext) await audioContext.close();
+  captureNode = captureSource = captureStream = micStream = recorderStream = audioContext = null;
+}
+
+function takeAudio(count) {
+  const audio = new Float32Array(count);
+  let offset = 0;
+  while (offset < count) {
+    const part = captureParts[0];
+    const length = Math.min(part.length, count - offset);
+    audio.set(part.subarray(0, length), offset);
+    if (length === part.length) captureParts.shift();
+    else captureParts[0] = part.subarray(length);
+    offset += length;
+  }
+  captureSampleCount -= count;
+  return audio;
+}
+
+function audioWav(samples, rate) {
+  const bytes = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(bytes);
+  for (const [offset, text] of [[0, "RIFF"], [8, "WAVE"], [12, "fmt "], [36, "data"]]) {
+    for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i));
+  }
+  for (const [offset, value] of [[4, bytes.byteLength - 8], [16, 16], [24, rate], [28, rate * 2], [40, samples.length * 2]]) {
+    view.setUint32(offset, value, true);
+  }
+  for (const [offset, value] of [[20, 1], [22, 1], [32, 2], [34, 16]]) view.setUint16(offset, value, true);
+  samples.forEach((sample, i) => {
+    const value = Math.max(-1, Math.min(1, sample));
+    view.setInt16(44 + i * 2, value * (value < 0 ? 32768 : 32767), true);
+  });
+  return new Blob([bytes], {type: "audio/wav"});
+}
+
+function enqueueAudio(samples, final = false) {
+  // ponytail: unsent audio stays in this tab; use IndexedDB if recording through long outages is needed.
+  uploadQueue.push({blob: samples.length ? audioWav(samples, audioContext.sampleRate) : null, index: chunkIndex++, final});
+  drainAudioQueue();
+}
+
+async function drainAudioQueue() {
+  if (uploading) return;
+  uploading = true;
+  try {
+    while (uploadQueue.length) {
+      try {
+        await sendChunk(uploadQueue[0]);
+        uploadQueue.shift();
+        if (uploadFailure) addSystem("Audio upload recovered.");
+        uploadFailure = null;
+      } catch (error) {
+        if (!uploadFailure) addSystem(`Audio upload paused; keeping audio in this tab and retrying. ${error.message || error}`, true);
+        uploadFailure = error;
+        setTimeout(drainAudioQueue, 2000);
+        break;
+      }
+    }
   } finally {
-    activeUploads = Math.max(0, activeUploads - 1);
+    uploading = false;
+  }
+}
+
+async function sendChunk(item) {
+  const form = new FormData();
+  if (item.blob) form.append("audio", item.blob, `audio_${item.index}.wav`);
+  for (const [key, value] of Object.entries(captureConfig)) form.append(key, value);
+  form.append("chunk_index", item.index);
+  form.append("final", String(item.final));
+  const res = await fetch("/api/transcribe_stream", {method: "POST", body: form, signal: AbortSignal.timeout(120000)});
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || "Streaming transcription failed.");
+  if (data.session_id === sessionId && data.chunk_index > lastCaptionIndex) {
+    lastCaptionIndex = data.chunk_index;
+    addCaption(data);
+    if (recordingActive) statusEl.textContent = `recording (${data.asr_backend || "asr"}, ${data.device})`;
   }
 }
 
@@ -601,8 +640,9 @@ async function pollEvents() {
       throw new Error(`HTTP ${res.status}`);
     }
     const data = await res.json();
-    latestEventId = data.latest || latestEventId;
+    latestEventId = data.latest ?? latestEventId;
     for (const event of data.events || []) {
+    if (event.session_id && event.session_id !== sessionId) continue;
     if (event.kind === "caption") {
       addCaption(event);
     } else if (event.kind === "polished") {
@@ -649,3 +689,9 @@ loadSources();
 loadBrowserInputs();
 addSystem("connected");
 pollEvents();
+window.addEventListener("beforeunload", event => {
+  if (recordingActive || uploadQueue.length || captureSampleCount) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
